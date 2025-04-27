@@ -1,0 +1,6 @@
+{
+  "timestamp": "20250427_114002",
+  "command": "how's the weather",
+  "response": "Based on current information, in Taipei it's partly cloudy with temperatures between 21-30°C, humidity 70-86%, and 10% chance of rain. The weather is comfortable to humid. In Tainan, it's also partly cloudy, temperatures 23-30°C, humidity 73-86%, 10% chance of rain, weather ranging from comfortable to humid.",
+  "command_type": "查詢"
+}

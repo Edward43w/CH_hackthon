@@ -41,11 +41,31 @@ class ResponseSpeaker:
         print(f"🎚️ 已設定播放速度為：{rate}")
 
     
-    def speak(self, text):
-        """用 Polly 直接朗讀文字，不存檔"""
+    # def speak(self, text):
+    #     """用 Polly 直接朗讀文字，不存檔"""
+    #     if not text:
+    #         print("⚠️ 沒有文字內容，跳過朗讀")
+    #         return
+    #     try:
+    #         ssml_text = f'<speak><prosody rate="{self.current_rate}">{text}</prosody></speak>'
+    #         response = self.client.synthesize_speech(
+    #             Text=ssml_text,
+    #             OutputFormat=self.output_format,
+    #             VoiceId=self.voice_id,
+    #             LanguageCode=self.language_code,
+    #             TextType="ssml"
+    #         )
+    #         audio_stream = response["AudioStream"].read()
+    #         pygame.mixer.music.load(io.BytesIO(audio_stream))
+    #         pygame.mixer.music.play()
+    #         print(f"🔊 Polly 開始朗讀（語速 {self.current_rate}）：{text}")
+    #     except Exception as e:
+    #         print(f"⚠️ Polly 語音合成錯誤：{e}")
+    def speak_return_audio_base64(self, text):
+        """用 Polly 合成文字並回傳 base64 編碼"""
         if not text:
             print("⚠️ 沒有文字內容，跳過朗讀")
-            return
+            return None
         try:
             ssml_text = f'<speak><prosody rate="{self.current_rate}">{text}</prosody></speak>'
             response = self.client.synthesize_speech(
@@ -56,11 +76,12 @@ class ResponseSpeaker:
                 TextType="ssml"
             )
             audio_stream = response["AudioStream"].read()
-            pygame.mixer.music.load(io.BytesIO(audio_stream))
-            pygame.mixer.music.play()
-            print(f"🔊 Polly 開始朗讀（語速 {self.current_rate}）：{text}")
+            audio_base64 = base64.b64encode(audio_stream).decode('utf-8')
+            print(f"🔊 Polly 語音合成成功，轉成 base64")
+            return audio_base64
         except Exception as e:
             print(f"⚠️ Polly 語音合成錯誤：{e}")
+            return None
 
     def stop_audio(self):
         """中止音訊播放"""

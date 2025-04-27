@@ -4,9 +4,12 @@ import './style.css'
 
 export default function App() {
   const [state, setState] = useState('idle')
-  const [fullText, setFullText] = useState('您好，我是語音機器人，有什麼可以幫助您的嗎？')  // 真正的文字
-  const [displayText, setDisplayText] = useState('')  // 打字動畫正在顯示的文字
-  const typingInterval = 200 // 打字速度(ms)
+
+  const [fullText, setFullText] = useState('請說「你好」來喚醒我')
+  const [displayText, setDisplayText] = useState('')
+  const [isListeningForCommand, setIsListeningForCommand] = useState(false)
+  const [statusInterval, setStatusInterval] = useState(null)
+  const typingInterval = 200
 
   const eyeL = useRef()
   const eyeR = useRef()
@@ -18,164 +21,191 @@ export default function App() {
   const mouth = useRef()
   const questions = useRef([])
 
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === '1') setState('idle')
-      if (e.key === '2') setState('thinking')
-      if (e.key === '3') setState('talking')
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  const hotword = '你好'
+  const exitWord = '再見'
+  const pauseWord = '暫停'
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition
 
-  useEffect(() => {
-    let blinkInterval
-
-    ;[browL, browR, frownL, frownR].forEach(el => el.current.style.display = 'none')
-    questions.current.forEach(el => el.style.display = 'none')
-    eyeL.current.classList.remove('blink')
-    eyeR.current.classList.remove('blink')
-    eyeL.current.style.display = 'block'
-    eyeR.current.style.display = 'block'
-    sweat.current.classList.remove('animate')
-    mouth.current.className = 'mouth'
-
-    if (state === 'idle') {
-      mouth.current.classList.add('idle')
-    }
-    if (state === 'thinking') {
-      browL.current.style.display = 'block'
-      browR.current.style.display = 'block'
-      browL.current.className = 'eyebrow thinking-horizontal left'
-      browR.current.className = 'eyebrow thinking-horizontal right'
-      eyeL.current.style.display = 'none'
-      eyeR.current.style.display = 'none'
-      frownL.current.style.display = 'block'
-      frownR.current.style.display = 'block'
-      mouth.current.classList.add('thinking')
-      questions.current.forEach(el => el.style.display = 'block')
-    }
-    if (state === 'talking') {
-      mouth.current.classList.add('talking')
-      blinkInterval = setInterval(() => {
-        eyeL.current.classList.add('blink')
-        eyeR.current.classList.add('blink')
-        setTimeout(() => {
-          eyeL.current.classList.remove('blink')
-          eyeR.current.classList.remove('blink')
-        }, 200)
-      }, 2000)
-    }
-
-    return () => clearInterval(blinkInterval)
-  }, [state])
-
-  // 打字動畫
+  const hotwordRecog = useRef(null)
+  const commandRecog = useRef(null)
+  const speechSynthesisRef = useRef(window.speechSynthesis)
+  const listeningRef = useRef(false)
+  const isProcessingRef = useRef(false)
+  const isSpeakingRef = useRef(false)
+  
+  
   useEffect(() => {
     let idx = 0
     setDisplayText('')
     if (!fullText) return
-
     const interval = setInterval(() => {
-      setDisplayText(prev => {
-        const nextText = prev + fullText.charAt(idx)
-        idx++
-        if (idx >= fullText.length) clearInterval(interval)
-        return nextText
-      })
+      setDisplayText(prev => prev + fullText.charAt(idx))
+      idx++
+      if (idx >= fullText.length) clearInterval(interval)
     }, typingInterval)
-
     return () => clearInterval(interval)
   }, [fullText])
 
-  // const handleVoiceInteraction = async () => {
-  //   setFullText("🎙️ 聆聽中...")
-  //   setState('thinking')
   
-  //   const audio = new Audio()  // ✅ 一開始就建好 audio，這樣瀏覽器允許播放
-  
-  //   try {
-  //     const res = await axios.post("http://localhost:5001/process_audio")
-  //     const text = res.data.reply
-  //     const audioUrl = res.data.audio_url
-  
-  //     audio.src = audioUrl
-  //     audio.load()  // 重新載入新的 audio 檔案
-  
-  //     const playPromise = audio.play()  // 嘗試播放
-  //     if (playPromise !== undefined) {
-  //       playPromise.then(() => {
-  //         setFullText('')  // 清空畫面
-  //         setState('talking')  // 切成 talking
-  //         setTimeout(() => {
-  //           setFullText(text)  // 延遲開始打字
-  //         }, 300)
-  //       }).catch(error => {
-  //         console.error("播放失敗：", error)
-  //         setFullText(text)  // 播放失敗也至少打字
-  //         setState('talking')
-  //       })
-  //     }
-  
-  //   } catch (err) {
-  //     console.error(err)
-  //     setFullText("❌ 發生錯誤，請稍後再試")
-  //     setState('idle')
-  //   }
-  // }
-  
-  const handleVoiceInteraction = async () => {
-    setFullText("🎙️ 聆聽中...")
-    setState('thinking')
-  
+
+  useEffect(() => {
+    if (!SR) {
+      setFullText('❌ 瀏覽器不支援 Web Speech API')
+      return
+    }
+    startHotwordRecognition()
+    return () => {
+      hotwordRecog.current?.abort()
+      commandRecog.current?.abort()
+      speechSynthesisRef.current.cancel()
+      if (statusInterval) clearInterval(statusInterval)
+    }
+  }, [])
+
+  const startHotwordRecognition = () => {
+    hotwordRecog.current = new SR()
+    hotwordRecog.current.lang = 'zh-TW'
+    hotwordRecog.current.continuous = true
+    hotwordRecog.current.interimResults = false
+    hotwordRecog.current.onresult = event => {
+      const text = event.results[event.results.length - 1][0].transcript.trim()
+      console.log('Hotword detected:', text)
+      if (text.includes(hotword)) {
+        hotwordRecog.current.stop()
+        startCommandRecognition()
+      }
+    }
+    hotwordRecog.current.onend = () => {
+      if (!listeningRef.current) hotwordRecog.current.start()
+    }
+    hotwordRecog.current.start()
+  }
+
+  const startCommandRecognition = () => {
+    listeningRef.current = true
+    setIsListeningForCommand(true)
+    setFullText('我在聽，請說出您的問題，說「再見」結束，或「暫停」停止')
+
+    commandRecog.current = new SR()
+    commandRecog.current.lang = 'zh-TW'
+    commandRecog.current.continuous = true
+    commandRecog.current.interimResults = false
+    commandRecog.current.onresult = handleCommandResult
+    commandRecog.current.onerror = e => {
+      if (e.error !== 'aborted') console.warn('Command Error', e.error)
+    }
+    commandRecog.current.onend = () => {
+      if (listeningRef.current) {
+        try { commandRecog.current.start() } catch {}
+      }
+    }
+    commandRecog.current.start()
+  }
+
+  const handleCommandResult = async event => {
+    const text = event.results[event.results.length - 1][0].transcript.trim()
+    console.log('Command detected:', text)
+
+    // 優先識別退出與暫停指令
+    if (text.includes(exitWord)) {
+      finishCommandRecognition()
+      return
+    }
+    if (text.includes(pauseWord)) {
+      backToListening()
+      return
+    }
+
+    // 若正在處理或語音中，忽略其他指令
+    if (isProcessingRef.current || isSpeakingRef.current) {
+      return
+    }
+
+    // 處理使用者指令
+    isProcessingRef.current = true
+    setIsListeningForCommand(false)
+    commandRecog.current.stop()
+    setFullText(`正在處理: ${text}`)
+    await sendCommandToServer(text)
+    isProcessingRef.current = false
+  }
+
+  const backToListening = () => {
+    speechSynthesisRef.current.cancel()
+    isProcessingRef.current = false
+    isSpeakingRef.current = false
+    setFullText('我在聽，請說出您的問題，說「再見」結束，或「暫停」停止')
+    try { commandRecog.current.stop() } catch {}
+    setTimeout(() => {
+      if (listeningRef.current) startCommandRecognition()
+    }, 500)
+  }
+
+  const finishCommandRecognition = () => {
+    listeningRef.current = false
+    isProcessingRef.current = false
+    isSpeakingRef.current = false
+    setIsListeningForCommand(false)
+    setFullText('請說「你好」來喚醒我')
+    commandRecog.current?.stop()
+    hotwordRecog.current?.start()
+  }
+
+  const sendCommandToServer = async text => {
     try {
-      await axios.post("http://localhost:5001/process_audio")
-  
-      const intervalId = setInterval(async () => {
-        const status = await axios.get("http://localhost:5001/audio_status")
-        console.log(status.data)  // ✅ 正確 debug
-        setState(status.data.state)
-        if (status.data.has_new) {
-          setFullText(status.data.reply)
+      await axios.post(`${import.meta.env.VITE_API_URL}/process_command`, { text })
+      const interval = setInterval(async () => {
+        const { data } = await axios.get(`${import.meta.env.VITE_API_URL}/audio_status`)
+        if (data.has_new && data.reply) {
+          setFullText(data.reply)
+          speak(data.reply)
+        }
+        if (data.state === 'idle') {
+          clearInterval(interval)
+          setIsListeningForCommand(true)
         }
       }, 1000)
+      setStatusInterval(interval)
     } catch (err) {
       console.error(err)
-      setFullText("❌ 發生錯誤，請稍後再試")
-      console.error("err")  // ✅ 正確錯誤輸出
+      setFullText('無法連接到後端')
+      setIsListeningForCommand(true)
     }
   }
-  
-  
-  
-  
-  
-  
+
+  const speak = text => {
+    // 在語音播放時持續聆聽以偵測「暫停」指令
+    if (listeningRef.current && commandRecog.current) {
+      try { commandRecog.current.start() } catch {}
+    }
+    isSpeakingRef.current = true
+    const ut = new SpeechSynthesisUtterance(text)
+    ut.lang = 'zh-TW'
+    ut.onend = () => {
+      isSpeakingRef.current = false
+      if (listeningRef.current) {
+        setIsListeningForCommand(true)
+        startCommandRecognition()
+      }
+    }
+    speechSynthesisRef.current.cancel()
+    speechSynthesisRef.current.speak(ut)
+  }
 
   return (
     <div className="main-container">
       <h1>語音機器人</h1>
-      <div className="content">
-        <div className="left-panel">
-          <div className="face" id="face">
-            <div className="eyebrow left" ref={browL}></div>
-            <div className="eyebrow right" ref={browR}></div>
-            <div className="eye left" ref={eyeL}></div>
-            <div className="eye right" ref={eyeR}></div>
-            <div className="frown left" ref={frownL}></div>
-            <div className="frown right" ref={frownR}></div>
-            <div className="sweat" ref={sweat}></div>
-            <div className="mouth" ref={mouth}></div>
-            {['q1', 'q2', 'q3'].map((q, i) => (
-              <div key={q} className={`question ${q}`} ref={el => questions.current[i] = el}>?</div>
-            ))}
-          </div>
-          <button className="record-btn" onClick={handleVoiceInteraction}>🎤 語音互動</button>
-        </div>
-
-        <div className="dialogue-box">
-          <p>{displayText}</p> {/* 用 displayText 打字顯示 */}
-        </div>
+      <div className="status-indicator">
+        <span>
+          {isListeningForCommand
+            ? '命令模式: 說指令或「再見」結束'
+            : fullText.startsWith('正在處理')
+            ? '處理中...'
+            : '偵測熱詞: 說「你好」'}
+        </span>
+      </div>
+      <div className="dialogue-box">
+        <p>{displayText}</p>
       </div>
     </div>
   )
